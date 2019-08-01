@@ -3,6 +3,8 @@
 #include <yak/yak_server.h>
 #include <yak/mc/marching_cubes.h>
 
+#include <yak_ros/srv/ResetParams.h>
+
 #include <gl_depth_sim/interfaces/opencv_interface.h>
 
 #include <pcl_ros/point_cloud.h>
@@ -44,6 +46,12 @@ public:
 
     // Advertise service for marching cubes meshing
     generate_mesh_service_ = nh.advertiseService("generate_mesh_service", &OnlineFusionServer::onGenerateMesh, this);
+
+    // Advertise service for clearing the contents of the voxel volume
+    reset_volume_service_ = nh.advertiseService("reset_volume_service", &OnlineFusionServer::onResetVolume, this);
+
+    // Advertise service to re-initialize the contents of the voxel volume with new params
+    reset_params_service_ = nh.advertiseService("reset_params_service", &OnlineFusionServer::onResetParams, this);
   }
 
 private:
@@ -107,10 +115,35 @@ private:
     return true;
   }
 
+  bool onResetVolume(std_srvs::TriggerRequest &req, std_srvs::TriggerResponse &res)
+  {
+    ROS_INFO_STREAM("Resetting volume");
+    res.success = fusion_.reset();;
+    return true;
+  }
+
+  bool onResetParams(yak_ros_msgs::ResetParamsRequest &req, yak_ros_msgs::ResetParamsResponse &res)
+  {
+
+    ROS_INFO_STREAM("Resetting volume with new params");
+
+    // Set up new params starting from the current params
+    auto new_params = params_;
+
+    // Set up new volume paramaters
+    new_params.volume_dims = cv::Vec3i(req.size_x, req.size_y, req.size_z);
+    new_params.volume_resolution = req.voxel_size;
+
+    res.success = fusion_.resetWithNewParams(new_params);
+
+    return true;
+  }
+
   ros::Subscriber point_cloud_sub_;
   tf2_ros::Buffer tf_buffer_;
   tf2_ros::TransformListener robot_tform_listener_;
   ros::ServiceServer generate_mesh_service_;
+  ros::ServiceServer reset_volume_service_;
   yak::FusionServer fusion_;
   const kfusion::KinFuParams params_;
   Eigen::Affine3d world_to_camera_prev_;

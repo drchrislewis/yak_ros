@@ -1,0 +1,9 @@
+# Volume dimension, in meters
+float32 size_x
+float32 size_y
+float32 size_z
+
+# Volume resolution, in meters per voxel
+float32 voxel_size
+---
+bool success

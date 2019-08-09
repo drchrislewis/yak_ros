@@ -33,11 +33,12 @@ public:
    * @param params - KinFu parameters such as TSDF volume size, resolution, etc.
    * @param world_to_volume - Transform from world frame to volume origin frame.
    */
-  OnlineFusionServer(ros::NodeHandle &nh, const kfusion::KinFuParams& params, const Eigen::Affine3f& world_to_volume) :
+  OnlineFusionServer(ros::NodeHandle &nh, const kfusion::KinFuParams& params, const Eigen::Affine3f& world_to_volume, const std::string& file_location) :
     fusion_(params, world_to_volume),
     params_(params),
     robot_tform_listener_(tf_buffer_),
-    world_to_camera_prev_(Eigen::Affine3d::Identity())
+    world_to_camera_prev_(Eigen::Affine3d::Identity()),
+    file_location_(file_location);
   {
     // Subscribe to depth images published on the topic named by the depth_topic param. Set up callback to integrate images when received.
     std::string depth_topic;
@@ -109,7 +110,7 @@ private:
     mc_params.scale = params_.volume_resolution;
     pcl::PolygonMesh mesh = yak::marchingCubesCPU(fusion_.downloadTSDF(), mc_params);
     ROS_INFO_STREAM("Meshing done, saving ply");
-    pcl::io::savePLYFileBinary("cubes.ply", mesh);
+    pcl::io::savePLYFileBinary(file_location_, mesh);
     ROS_INFO_STREAM("Saving done");
     res.success = true;
     return true;
@@ -147,6 +148,7 @@ private:
   yak::FusionServer fusion_;
   const kfusion::KinFuParams params_;
   Eigen::Affine3d world_to_camera_prev_;
+  std::string file_location_;
 };
 
 /**
@@ -159,6 +161,9 @@ int main(int argc, char **argv)
 {
   ros::init(argc, argv, "tsdf_node");
   ros::NodeHandle nh("tsdf_node");
+
+  std::string file_location;
+  nh.param<std::string>("output_file", file_location, "cubes.ply");
 
   kfusion::KinFuParams default_params = kfusion::KinFuParams::default_params();
   default_params.use_pose_hints = true; // use robot forward kinematics to find camera pose relative to TSDF volume
@@ -191,7 +196,7 @@ int main(int argc, char **argv)
   default_params.gradient_delta_factor = 0.25; //in voxel sizes
 
   // Set up the fusion server with the above parameters;
-  OnlineFusionServer ofs(nh, default_params, world_to_volume);
+  OnlineFusionServer ofs(nh, default_params, world_to_volume, file_location);
 
   // Do TSDF-type things for the lifetime of the node
   ros::spin();

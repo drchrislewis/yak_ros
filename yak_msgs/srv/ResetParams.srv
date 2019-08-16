@@ -1,7 +1,7 @@
-# Volume dimension, in meters
-float32 size_x
-float32 size_y
-float32 size_z
+# Volume dimension, in number of voxels
+uint32 size_x
+uint32 size_y
+uint32 size_z
 
 # Volume resolution, in meters per voxel
 float32 voxel_size

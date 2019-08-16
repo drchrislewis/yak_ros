@@ -11,6 +11,7 @@ find_package(catkin REQUIRED COMPONENTS
 add_service_files(
   DIRECTORY srv
   FILES
+    ResetDimensions.srv
     ResetParams.srv
 )
 

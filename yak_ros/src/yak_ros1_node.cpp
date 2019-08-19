@@ -3,7 +3,7 @@
 #include <yak/yak_server.h>
 #include <yak/mc/marching_cubes.h>
 
-#include <yak_ros/srv/ResetParams.h>
+#include <yak_msgs/ResetParams.h>
 
 #include <gl_depth_sim/interfaces/opencv_interface.h>
 
@@ -38,7 +38,7 @@ public:
     params_(params),
     robot_tform_listener_(tf_buffer_),
     world_to_camera_prev_(Eigen::Affine3d::Identity()),
-    file_location_(file_location);
+    file_location_(file_location)
   {
     // Subscribe to depth images published on the topic named by the depth_topic param. Set up callback to integrate images when received.
     std::string depth_topic;
@@ -123,7 +123,7 @@ private:
     return true;
   }
 
-  bool onResetParams(yak_ros_msgs::ResetParamsRequest &req, yak_ros_msgs::ResetParamsResponse &res)
+  bool onResetParams(yak_msgs::ResetParamsRequest &req, yak_msgs::ResetParamsResponse &res)
   {
 
     ROS_INFO_STREAM("Resetting volume with new params");
@@ -145,6 +145,7 @@ private:
   tf2_ros::TransformListener robot_tform_listener_;
   ros::ServiceServer generate_mesh_service_;
   ros::ServiceServer reset_volume_service_;
+  ros::ServiceServer reset_params_service_;
   yak::FusionServer fusion_;
   const kfusion::KinFuParams params_;
   Eigen::Affine3d world_to_camera_prev_;
@@ -160,7 +161,7 @@ private:
 int main(int argc, char **argv)
 {
   ros::init(argc, argv, "tsdf_node");
-  ros::NodeHandle nh("tsdf_node");
+  ros::NodeHandle nh; // removed "tsdf_node" from node handle to keep service names cleaner
 
   std::string file_location;
   nh.param<std::string>("output_file", file_location, "cubes.ply");

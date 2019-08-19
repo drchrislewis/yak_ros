@@ -10,6 +10,7 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 find_package(yak REQUIRED)
+find_package(yak_msgs REQUIRED)
 
 find_package(std_srvs REQUIRED)
 find_package(sensor_msgs REQUIRED)
@@ -23,6 +24,23 @@ find_package(cv_bridge REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(OpenCV REQUIRED COMPONENTS core highgui)
 
+find_package(OpenMP REQUIRED)
+
+if(NOT TARGET OpenMP::OpenMP_CXX)
+    find_package(Threads REQUIRED)
+    add_library(OpenMP::OpenMP_CXX IMPORTED INTERFACE)
+    set_property(TARGET OpenMP::OpenMP_CXX
+                 PROPERTY INTERFACE_COMPILE_OPTIONS ${OpenMP_CXX_FLAGS})
+    # Only works if the same flag is passed to the linker; use CMake 3.9+ otherwise (Intel, AppleClang)
+    set_property(TARGET OpenMP::OpenMP_CXX
+      PROPERTY INTERFACE_LINK_LIBRARIES ${OpenMP_CXX_FLAGS} Threads::Threads)
+endif()
+
+# trying to avoid setting LD_LIBRARY_PATH
+set(NVIDIA_LIBS /usr/lib/nvidia-384)
+SET(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
+set(CMAKE_INSTALL_RPATH "/usr/lib/nvidia-384")
 
 if ($ENV{ROS_VERSION} VERSION_EQUAL "1")
     # Build for ROS 1 using Catkin
@@ -44,9 +62,11 @@ if ($ENV{ROS_VERSION} VERSION_EQUAL "1")
          ${tf2_ros_LIBRARIES}
          ${tf2_eigen_LIBRARIES}
          ${cv_bridge_LIBRARIES}
+	 ${NVIDIA_LIBS}
        CATKIN_DEPENDS
        DEPENDS
          yak
+	 yak_msgs
          tf2_eigen
          tf2
      )
@@ -62,14 +82,17 @@ if ($ENV{ROS_VERSION} VERSION_EQUAL "1")
          ${tf2_ros_LIBRARIES}
          ${tf2_eigen_LIBRARIES}
          ${cv_bridge_LIBRARIES}
+	 ${NVIDIA_LIBS}
          )
 
      target_include_directories(${PROJECT_NAME}_node PUBLIC
        ${catkin_INCLUDE_DIRS}
        ${yak_INCLUDE_DIRS}
+       ${yak_msgs_INCLUDE_DIRS}
        ${gl_depth_sim_INCLUDE_DIRS}
      )
-
+   include_directories(include)
+   
 else()
     # Build for ROS 2 using Ament
     find_package(ament_cmake REQUIRED)

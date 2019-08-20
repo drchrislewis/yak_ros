@@ -33,21 +33,24 @@ public:
    * @brief OnlineFusionServer constructor
    * @param nh - ROS node handle
    * @param params - KinFu parameters such as TSDF volume size, resolution, etc.
-   * @param world_to_volume - Transform from world frame to volume origin frame.
+   * @param fusion_world_to_volume - Transform from world frame to volume origin frame.
+   * Note: the fusion server behaves as if the tsdf_frame its world
+   * We assume someone moves the tsdf_frame around to place the volume to be scanned relative a world_frame
+   * The mesh is returned in the tsdf_frame and needs to be transformed into the world frame
    */
-  OnlineFusionServer(ros::NodeHandle &nh, const kfusion::KinFuParams& params, const Eigen::Affine3f& world_to_volume, const std::string& file_location) :
-    fusion_(params, world_to_volume),
+  OnlineFusionServer(ros::NodeHandle &nh, const kfusion::KinFuParams& params, const Eigen::Affine3f& fusion_world_to_volume, const std::string& file_location) :
     params_(params),
     robot_tform_listener_(tf_buffer_),
-    world_to_camera_prev_(Eigen::Affine3d::Identity()),
-    file_location_(file_location),
-    tsdf_frame_name_("yak_frame"),
-    camera_on_(true)
+    fusion_(params, fusion_world_to_volume),
+    tsdf_to_camera_prev_(Eigen::Affine3d::Identity()),
+    file_location_(file_location)
   {
+    // get parameters for this node
+    nh.param<std::string>("depth_topic", depth_topic_, "camera/depth/image_raw"); // always use the raw image
+    nh.param<std::string>("tsdf_frame_name", tsdf_frame_name_, "yak_frame"); // here we assume someone moves the tsdf frame from place to place
+
     // Subscribe to depth images published on the topic named by the depth_topic param. Set up callback to integrate images when received.
-    std::string depth_topic;
-    nh.getParam("depth_topic", depth_topic);
-    point_cloud_sub_ = nh.subscribe(depth_topic, 1, &OnlineFusionServer::onReceivedDepthImg, this);
+    point_cloud_sub_ = nh.subscribe(depth_topic_, 1, &OnlineFusionServer::onReceivedDepthImg, this);
 
     // Advertise service for marching cubes meshing
     generate_mesh_service_ = nh.advertiseService("generate_mesh_service", &OnlineFusionServer::onGenerateMesh, this);
@@ -58,8 +61,6 @@ public:
     // Advertise service to re-initialize the contents of the voxel volume with new params
     reset_params_service_ = nh.advertiseService("reset_params_service", &OnlineFusionServer::onResetParams, this);
 
-    // Advertise service to turn on and off the camera
-    set_camera_service_ = nh.advertiseService("set_camera_service", &OnlineFusionServer::onSetCamera, this);
 }
 
 private:
@@ -74,12 +75,12 @@ private:
       auto next_image = image_q_.front();
       image_q_.pop(); // remove it now
 
-      // Get the camera pose in the world frame at the time when the depth image was generated.
+      // Get the camera pose in the tsdf frame at the time when the depth image was generated.
       ROS_INFO_STREAM("Got depth image");
-      geometry_msgs::TransformStamped transform_world_to_camera;
+      geometry_msgs::TransformStamped transform_tsdf_to_camera;
       try
 	{
-	  transform_world_to_camera = tf_buffer_.lookupTransform(tsdf_frame_name_, next_image->header.frame_id, next_image->header.stamp);
+	  transform_tsdf_to_camera = tf_buffer_.lookupTransform(tsdf_frame_name_, next_image->header.frame_id, next_image->header.stamp);
 	}
       catch(tf2::TransformException &ex)
 	{
@@ -87,11 +88,11 @@ private:
 	  ROS_WARN("%s", ex.what());
 	  return;
 	}
-      Eigen::Affine3d world_to_camera = tf2::transformToEigen(transform_world_to_camera);
+      Eigen::Affine3d tsdf_to_camera = tf2::transformToEigen(transform_tsdf_to_camera);
       
       // Find how much the camera moved since the last depth image. If the magnitude of motion was below some threshold, abort integration.
       // This is to prevent noise from accumulating in the isosurface due to numerous observations from the same pose.
-      std::double_t motion_mag = (world_to_camera.inverse() * world_to_camera_prev_).translation().norm();
+      std::double_t motion_mag = (tsdf_to_camera.inverse() *tsdf_to_camera_prev_).translation().norm();
       ROS_INFO_STREAM(motion_mag);
       if(motion_mag < DEFAULT_MINIMUM_TRANSLATION)
 	{
@@ -100,21 +101,26 @@ private:
 	}
       
       cv_bridge::CvImagePtr cv_ptr = cv_bridge::toCvCopy(next_image, sensor_msgs::image_encodings::TYPE_16UC1);
-      
-      // Integrate the depth image into the TSDF volume
+
+#if (0)// debug the transform by printing it out every 30'th update
       static int q=0;
       if(q==0){
-	ROS_ERROR("f1 %6.3lf %6.3lf %6.3lf %6.3lf", world_to_camera.linear().col(0).x(), world_to_camera.linear().col(1).x(),  world_to_camera.linear().col(2).x(), world_to_camera.translation().x());
-	ROS_ERROR("f2 %6.3lf %6.3lf %6.3lf %6.3lf", world_to_camera.linear().col(0).y(), world_to_camera.linear().col(1).y(),  world_to_camera.linear().col(2).y(),  world_to_camera.translation().y());
-	ROS_ERROR("f3 %6.3lf %6.3lf %6.3lf %6.3lf\n", world_to_camera.linear().col(0).z(), world_to_camera.linear().col(1).z(),  world_to_camera.linear().col(2).z(),  world_to_camera.translation().z());
+	ROS_ERROR("f1 %6.3lf %6.3lf %6.3lf %6.3lf",
+		  tsdf_to_camera.linear().col(0).x(), tsdf_to_camera.linear().col(1).x(),  tsdf_to_camera.linear().col(2).x(), tsdf_to_camera.translation().x());
+	ROS_ERROR("f2 %6.3lf %6.3lf %6.3lf %6.3lf",
+		  tsdf_to_camera.linear().col(0).y(), tsdf_to_camera.linear().col(1).y(),  tsdf_to_camera.linear().col(2).y(),  tsdf_to_camera.translation().y());
+	ROS_ERROR("f3 %6.3lf %6.3lf %6.3lf %6.3lf\n",
+		  tsdf_to_camera.linear().col(0).z(), tsdf_to_camera.linear().col(1).z(),  tsdf_to_camera.linear().col(2).z(),  tsdf_to_camera.translation().z());
       }
       q=(q+1)%30;
-      
-      if (!fusion_.fuse(cv_ptr->image, world_to_camera.cast<float>()))
+#endif      
+
+      // Integrate the depth image into the TSDF volume
+      if (!fusion_.fuse(cv_ptr->image, tsdf_to_camera.cast<float>()))
 	ROS_WARN_STREAM("Failed to fuse image");
       
       // If integration was successful, update the previous camera pose with the new camera pose
-      world_to_camera_prev_ = world_to_camera;
+      tsdf_to_camera_prev_ = tsdf_to_camera;
       
     }
     return;
@@ -131,7 +137,8 @@ private:
     yak::MarchingCubesParameters mc_params;
     mc_params.scale = params_.volume_resolution;
     pcl::PolygonMesh mesh = yak::marchingCubesCPU(fusion_.downloadTSDF(), mc_params);
-    // TODO transform mesh into world frame by listening to transform from tsdf_frame to base_link
+
+    // save the mash to a file
     ROS_INFO_STREAM("Meshing done, saving ply");
     pcl::io::savePLYFileBinary(file_location_, mesh);
     ROS_INFO_STREAM("Saving done");
@@ -148,8 +155,11 @@ private:
 
   bool onResetParams(yak_msgs::ResetParamsRequest &req, yak_msgs::ResetParamsResponse &res)
   {
-       res.success = true;
-       return true;// ignoring change in tsdf volume
+    // TODO remove the next three lines
+    res.success = true;
+    return true;// ignoring change in tsdf volume
+    //***********************************
+
     ROS_INFO_STREAM("Resetting volume with new params");
 
     // Set up new params starting from the current params
@@ -164,23 +174,7 @@ private:
     return true;
   }
 
-  bool onSetCamera(std_srvs::SetBoolRequest &req, std_srvs::SetBoolResponse &res)
-  {
-    if(req.data == true){
-      ROS_INFO_STREAM("Camera ON");
-      camera_on_ = true;
-      res.message = "Camera ON";
-    }
-    if(req.data == false){
-      camera_on_ = false;
-      ROS_INFO_STREAM("Camera OFF");
-      res.message = "Camera OFF";
-    }
-    res.success = true; 
-    return true;
-  }
-
-
+  const kfusion::KinFuParams params_;
   ros::Subscriber point_cloud_sub_;
   tf2_ros::Buffer tf_buffer_;
   tf2_ros::TransformListener robot_tform_listener_;
@@ -189,14 +183,12 @@ private:
   ros::ServiceServer reset_params_service_;
   ros::ServiceServer set_camera_service_;
   yak::FusionServer fusion_;
-  const kfusion::KinFuParams params_;
-  Eigen::Affine3d world_to_camera_prev_;
+  Eigen::Affine3d tsdf_to_camera_prev_;
   std::string file_location_;
   std::string tsdf_frame_name_;
-  //  tf::TransformListener listener_;
-  //  tf::StampedTransform Transform_;
+  std::string depth_topic_;
   std::queue<sensor_msgs::ImageConstPtr> image_q_;
-  bool camera_on_;
+
 };
 
 /**
@@ -229,13 +221,13 @@ int main(int argc, char **argv)
   ROS_INFO("Camera Intr Params: %f %f %f %f\n", default_params.intr.fx, default_params.intr.fy, default_params.intr.cx, default_params.intr.cy);
 
   // since we move the yak_frame with the mutable_transform_publisher, world_to_volume is always Identity, only the box size can change
-
-  Eigen::Affine3f world_to_volume (Eigen::Affine3f::Identity());
+  // The resulting mesh from from the scan server is in the yak_frame, not the world
+  Eigen::Affine3f fusion_world_to_volume (Eigen::Affine3f::Identity());
 
   // Set up TSDF parameters
   // TODO: Autocompute resolution from volume length/width/height in meters
-  default_params.volume_dims = cv::Vec3i(640, 640, 640);
-  default_params.volume_resolution = 0.01;
+  default_params.volume_dims = cv::Vec3i(32*32, 32*32, 32*32);
+  default_params.volume_resolution = 0.005;
   default_params.volume_pose = Eigen::Affine3f::Identity(); // This gets overwritten when Yak is initialized
   default_params.tsdf_trunc_dist = default_params.volume_resolution * 5.0f; //meters;
   default_params.tsdf_max_weight = 50;   //frames
@@ -243,7 +235,7 @@ int main(int argc, char **argv)
   default_params.gradient_delta_factor = 0.25; //in voxel sizes
 
   // Set up the fusion server with the above parameters;
-  OnlineFusionServer ofs(nh, default_params, world_to_volume, file_location);
+  OnlineFusionServer ofs(nh, default_params, fusion_world_to_volume, file_location);
 
   // Do TSDF-type things for the lifetime of the node
   ros::spin();

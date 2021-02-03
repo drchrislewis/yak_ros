@@ -356,7 +356,8 @@ int main(int argc, char** argv)
   kinfu_params.light_pose = cv::Vec3f(light_pose_x, light_pose_y, light_pose_z);
 
   kinfu_params.use_pose_hints = true;  // use robot forward kinematics to find camera pose relative to TSDF volume
-  kinfu_params.use_icp = false;        // since we're using robot FK to get the camera pose, don't use ICP (TODO: yet!)
+  //  kinfu_params.use_icp = false;        // since we're using robot FK to get the camera pose, don't use ICP (TODO: yet!)
+  pnh.param<bool>("use_icp", kinfu_params.use_icp, true);
   pnh.param<bool>("update_via_sensor_motion", kinfu_params.update_via_sensor_motion, false);
 
   // Set up the fusion server with the above parameters;
